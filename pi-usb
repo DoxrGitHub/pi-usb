@@ -1,0 +1,633 @@
+#!/bin/bash
+
+# ___________________________.
+#|;;|                     |;;||
+#|[]|---------------------|[]||
+#|;;|                     |;;||
+#|;;|                     |;;||
+#|;;|                     |;;||
+#|;;|                     |;;||
+#|;;|                     |;;||
+#|;;|                     |;;||
+#|;;|_____________________|;;||
+#|;;;;;;;;;;;;;;;;;;;;;;;;;;;||
+#|;;;;;;_______________ ;;;;;||
+#|;;;;;|  ___          |;;;;;||
+#|;;;;;| |;;;|         |;;;;;||
+#|;;;;;| |;;;|         |;;;;;||
+#|;;;;;| |;;;|         |;;;;;||
+#|;;;;;| |;;;|         |;;;;;||
+#|;;;;;| |___|         |;;;;;||
+#\_____|_______________|_____||
+# ~~~~~^^^^^^^^^^^^^^^^^~~~~~~
+
+# Usage: sudo pi-usb -f /path/to/image.img [--ro|--rw] [--removable|--non-removable]
+#        sudo pi-usb --unmount
+#        sudo pi-usb --status
+#        sudo pi-usb --setup
+#        sudo pi-usb --auto-setup /path/to/image.img [--ro|--rw] [--removable|--non-removable]
+#        sudo pi-usb --auto-disable
+
+CONFIG_DIR="/etc/pi-usb"
+SETUP_FLAG="$CONFIG_DIR/setup_done"
+AUTO_CONFIG="$CONFIG_DIR/auto-mount.conf"
+SCRIPT_NAME="pi-usb"
+DESTINATION="/usr/local/bin/$SCRIPT_NAME"
+SERVICE_NAME="pi-usb-automount"
+SERVICE_PATH="/etc/systemd/system/$SERVICE_NAME.service"
+LOG_FILE="/var/log/pi-usb-automount.log"
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # NO COLOR
+
+check_root() {
+    if [ "$(id -u)" -ne 0 ]; then
+        echo -e "${RED}Error: This script must be run as root.${NC}"
+        echo "Please use: sudo $SCRIPT_NAME $*"
+        exit 1
+    fi
+}
+
+# so we can print color easier
+print_msg() {
+    local color=$1
+    local msg=$2
+    echo -e "${color}$msg${NC}"
+}
+
+# debian bookworm+ moved its loc
+detect_boot_location() {
+    if [ -d "/boot/firmware" ]; then
+        echo "/boot/firmware"
+    else
+        echo "/boot"
+    fi
+}
+
+resolve_path() {
+    local path="$1"
+    
+    path=$(echo "$path" | sed 's/^["'\'']\(.*\)["'\'']$/\1/')
+    
+    if command -v realpath &>/dev/null; then
+        realpath -q "$path" 2>/dev/null && return
+    fi
+    
+    if [[ "$path" == \~* ]]; then
+        path="${HOME}${path:1}"
+    fi
+    
+    if [[ ! "$path" = /* ]]; then
+        path="$(pwd)/$path"
+    fi
+    
+    echo "$path"
+}
+
+# incase smth goes wrong
+backup_file() {
+    local file="$1"
+    local backup="${file}.backup.$(date +%Y%m%d%H%M%S)"
+    
+    if [ -f "$file" ]; then
+        cp "$file" "$backup"
+        print_msg "$BLUE" "Created backup: $backup"
+        return 0
+    else
+        return 1
+    fi
+}
+
+setup() {
+    if [ -f "$SETUP_FLAG" ]; then
+        print_msg "$YELLOW" "Setup has already been completed."
+        read -p "Do you want to run setup again? This could overwrite existing configurations. (y/N): " confirm
+        if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+            print_msg "$BLUE" "Setup canceled."
+            exit 0
+        fi
+    fi
+
+    mkdir -p "$CONFIG_DIR"
+    chmod 755 "$CONFIG_DIR"
+
+    BOOT_DIR=$(detect_boot_location)
+    CONFIG_TXT="$BOOT_DIR/config.txt"
+    CMDLINE_TXT="$BOOT_DIR/cmdline.txt"
+
+    print_msg "$BLUE" "Boot directory detected: $BOOT_DIR"
+    
+    if [ ! -f "$CONFIG_TXT" ]; then
+        print_msg "$RED" "Error: $CONFIG_TXT not found."
+        exit 1
+    fi
+    
+    if [ ! -f "$CMDLINE_TXT" ]; then
+        print_msg "$RED" "Error: $CMDLINE_TXT not found."
+        exit 1
+    fi
+
+    print_msg "$BLUE" "Modifying $CONFIG_TXT..."
+    backup_file "$CONFIG_TXT"
+    
+    if ! grep -q "^dtoverlay=dwc2$" "$CONFIG_TXT"; then
+        echo "" >> "$CONFIG_TXT"
+        echo "# Added by pi-usb setup" >> "$CONFIG_TXT"
+        echo "dtoverlay=dwc2" >> "$CONFIG_TXT"
+        print_msg "$GREEN" "Added dwc2 overlay to $CONFIG_TXT"
+    else
+        print_msg "$YELLOW" "dwc2 overlay already present in $CONFIG_TXT"
+    fi
+
+    print_msg "$BLUE" "Modifying $CMDLINE_TXT..."
+    backup_file "$CMDLINE_TXT"
+    
+    if ! grep -q "modules-load=dwc2,g_mass_storage" "$CMDLINE_TXT"; then
+        if grep -q "rootwait" "$CMDLINE_TXT"; then
+            sed -i 's/rootwait/rootwait modules-load=dwc2,g_mass_storage/' "$CMDLINE_TXT"
+        else
+            sed -i 's/$/ modules-load=dwc2,g_mass_storage/' "$CMDLINE_TXT"
+        fi
+        print_msg "$GREEN" "Added required modules to $CMDLINE_TXT"
+    else
+        print_msg "$YELLOW" "Required modules already present in $CMDLINE_TXT"
+    fi
+
+    if [ "$(realpath "$0")" != "$DESTINATION" ]; then
+        print_msg "$BLUE" "Installing pi-usb script to $DESTINATION..."
+        cp "$0" "$DESTINATION"
+        chmod +x "$DESTINATION"
+        print_msg "$GREEN" "Script installed to $DESTINATION"
+    else
+        print_msg "$YELLOW" "Script is already installed in the correct location."
+    fi
+
+    LOG_DIR=$(dirname "$LOG_FILE")
+    if [ ! -d "$LOG_DIR" ]; then
+        mkdir -p "$LOG_DIR"
+        chmod 755 "$LOG_DIR"
+    fi
+
+    touch "$SETUP_FLAG"
+    print_msg "$GREEN" "Setup completed successfully!"
+
+    read -p "A reboot is required for changes to take effect. Reboot now? (Y/n): " reboot_choice
+    if [[ ! "$reboot_choice" =~ ^[Nn]$ ]]; then
+        print_msg "$BLUE" "Rebooting..."
+        sleep 2
+        reboot
+    else
+        print_msg "$YELLOW" "Please remember to reboot your Pi for changes to take effect."
+    fi
+}
+
+# check if g_mass_storage module is loaded
+is_mass_storage_loaded() {
+    lsmod | grep -q "g_mass_storage"
+    return $?
+}
+
+unmount_usb() {
+    if is_mass_storage_loaded; then
+        print_msg "$BLUE" "Unmounting USB mass storage..."
+        modprobe -r g_mass_storage
+        local result=$?
+        sleep 1  # make sure it has time to unload
+        
+        if ! is_mass_storage_loaded; then
+            print_msg "$GREEN" "USB mass storage unmounted successfully."
+            return 0
+        else
+            print_msg "$RED" "Failed to unmount USB mass storage."
+            return 1
+        fi
+    else
+        print_msg "$YELLOW" "USB mass storage is not currently mounted."
+        return 0
+    fi
+}
+
+check_image_file() {
+    local image_path="$1"
+    
+    if [ ! -f "$image_path" ]; then
+        print_msg "$RED" "Error: Image file not found: $image_path"
+        return 1
+    fi
+    
+    local file_size=$(stat -c%s "$image_path" 2>/dev/null || ls -l "$image_path" | awk '{print $5}')
+    if [ "$file_size" -lt 512 ]; then
+        print_msg "$YELLOW" "Warning: Image file size is very small (${file_size} bytes)."
+        print_msg "$YELLOW" "The file may not be recognized as a valid disk image."
+    fi
+    
+    if [ ! -r "$image_path" ]; then
+        print_msg "$RED" "Error: Image file is not readable: $image_path"
+        return 1
+    fi
+    
+    return 0
+}
+
+# this is the meat
+mount_usb() {
+    local image_path="$1"
+    local readonly="$2"
+    local removable="$3"
+
+    image_path=$(resolve_path "$image_path")
+
+    check_image_file "$image_path"
+    if [ $? -ne 0 ]; then
+        exit 1
+    fi
+
+    unmount_usb
+    
+    local ro_value=0
+    if [ "$readonly" = "true" ]; then
+        ro_value=1
+    fi
+    
+    local removable_value=1
+    if [ "$removable" = "false" ]; then
+        removable_value=0
+    fi
+
+    print_msg "$BLUE" "Mounting USB mass storage..."
+    print_msg "$BLUE" "Image: $image_path"
+    print_msg "$BLUE" "Mode: $([ "$readonly" = "true" ] && echo "Read-only" || echo "Read-write")"
+    print_msg "$BLUE" "Type: $([ "$removable" = "true" ] && echo "Removable" || echo "Non-removable")"
+    
+    modprobe g_mass_storage file="$image_path" ro=$ro_value removable=$removable_value stall=0
+    
+    local result=$?
+    if [ $result -eq 0 ]; then
+        sleep 2
+        
+        if is_mass_storage_loaded; then
+            print_msg "$GREEN" "USB mass storage mounted successfully."
+            
+            if [ -d "/sys/class/udc" ]; then
+                local udc_status=$(ls -A /sys/class/udc 2>/dev/null)
+                if [ -z "$udc_status" ]; then
+                    print_msg "$YELLOW" "Warning: USB controller is available but not connected to a host."
+                    print_msg "$YELLOW" "Make sure your Raspberry Pi is connected to a host device via USB."
+                fi
+            fi
+        else
+            print_msg "$RED" "Error: Module appeared to load but is not active."
+            print_msg "$YELLOW" "Debug: Running 'dmesg | tail -n 20' for error messages:"
+            dmesg | tail -n 20
+            exit 1
+        fi
+    else
+        print_msg "$RED" "Failed to mount USB mass storage (error code: $result)."
+        print_msg "$YELLOW" "Debug: Running 'dmesg | tail -n 20' for error messages:"
+        dmesg | tail -n 20
+        exit 1
+    fi
+}
+
+setup_automount() {
+    local image_path="$1"
+    local readonly="$2"
+    local removable="$3"
+    
+    if [ ! -f "$SETUP_FLAG" ]; then
+        print_msg "$YELLOW" "Pi-USB setup must be completed before setting up auto-mount."
+        print_msg "$YELLOW" "Please run 'sudo pi-usb --setup' first."
+        exit 1
+    fi
+
+    image_path=$(resolve_path "$image_path")
+    
+    check_image_file "$image_path"
+    if [ $? -ne 0 ]; then
+        exit 1
+    fi
+
+    mkdir -p "$CONFIG_DIR"
+    chmod 755 "$CONFIG_DIR"
+    
+    cat > "$AUTO_CONFIG" << EOF
+# Pi-USB auto-mount configuration
+IMAGE_PATH="$image_path"
+READONLY="$readonly"
+REMOVABLE="$removable"
+EOF
+    chmod 644 "$AUTO_CONFIG"
+
+    # set up a systemd service for auto-mounting
+    cat > "$SERVICE_PATH" << EOF
+[Unit]
+Description=Pi-USB Auto Mount Service
+After=local-fs.target systemd-modules-load.service
+Wants=systemd-modules-load.service
+
+[Service]
+Type=oneshot
+ExecStart=$DESTINATION --auto-mount
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    chmod 644 "$SERVICE_PATH"
+
+    systemctl daemon-reload
+    systemctl enable "$SERVICE_NAME"
+    
+    print_msg "$GREEN" "Auto-mount has been set up to use: $image_path"
+    print_msg "$GREEN" "Mode: $([ "$readonly" = "true" ] && echo "Read-only" || echo "Read-write")"
+    print_msg "$GREEN" "Type: $([ "$removable" = "true" ] && echo "Removable" || echo "Non-removable")"
+    print_msg "$GREEN" "USB mass storage will be automatically mounted on next boot."
+    
+    read -p "Do you want to mount this image now? (Y/n): " mount_now
+    if [[ ! "$mount_now" =~ ^[Nn]$ ]]; then
+        mount_usb "$image_path" "$readonly" "$removable"
+    fi
+}
+
+disable_automount() {
+    if [ ! -f "$AUTO_CONFIG" ]; then
+        print_msg "$YELLOW" "Auto-mount is not currently configured."
+        exit 0
+    fi
+    
+    if [ -f "$SERVICE_PATH" ]; then
+        systemctl stop "$SERVICE_NAME" 2>/dev/null
+        systemctl disable "$SERVICE_NAME" 2>/dev/null
+        rm -f "$SERVICE_PATH"
+        systemctl daemon-reload
+    fi
+    
+    rm -f "$AUTO_CONFIG"
+    
+    print_msg "$GREEN" "Auto-mount has been disabled."
+}
+
+auto_mount() {
+    LOG_DIR=$(dirname "$LOG_FILE")
+    if [ ! -d "$LOG_DIR" ]; then
+        mkdir -p "$LOG_DIR"
+        chmod 755 "$LOG_DIR"
+    fi
+    
+    if [ ! -f "$AUTO_CONFIG" ]; then
+        echo "Auto-mount configuration not found." >> "$LOG_FILE" 2>&1
+        exit 1
+    fi
+    
+    source "$AUTO_CONFIG"
+    
+    if [ ! -f "$IMAGE_PATH" ]; then
+        echo "Error: Image file not found: $IMAGE_PATH" >> "$LOG_FILE" 2>&1
+        exit 1
+    fi
+    
+    echo "Auto-mounting USB storage from $IMAGE_PATH" >> "$LOG_FILE" 2>&1
+    mount_usb "$IMAGE_PATH" "$READONLY" "$REMOVABLE" >> "$LOG_FILE" 2>&1
+}
+
+show_status() {
+    if is_mass_storage_loaded; then
+        print_msg "$GREEN" "USB mass storage is currently active."
+        echo ""
+        echo "Current settings:"
+        
+        local param_dir="/sys/module/g_mass_storage/parameters"
+        if [ -d "$param_dir" ]; then
+            if [ -f "$param_dir/file" ]; then
+                local file=$(cat "$param_dir/file" 2>/dev/null || echo "Unknown")
+                echo "Image: $file"
+                
+                if [ ! -f "$file" ]; then
+                    print_msg "$YELLOW" "Warning: The image file no longer exists at this location!"
+                fi
+            else
+                echo "Image: Unknown"
+            fi
+            
+            if [ -f "$param_dir/ro" ]; then
+                local ro=$(cat "$param_dir/ro" 2>/dev/null || echo "Unknown")
+                echo "Mode: $([ "$ro" = "1" ] && echo "Read-only" || echo "Read-write")"
+            else
+                echo "Mode: Unknown"
+            fi
+            
+            if [ -f "$param_dir/removable" ]; then
+                local removable=$(cat "$param_dir/removable" 2>/dev/null || echo "Unknown")
+                echo "Type: $([ "$removable" = "1" ] && echo "Removable" || echo "Non-removable")"
+            else
+                echo "Type: Unknown"
+            fi
+            
+            if [ -f "$param_dir/stall" ]; then
+                local stall=$(cat "$param_dir/stall" 2>/dev/null || echo "Unknown")
+                echo "Stall: $([ "$stall" = "0" ] && echo "Disabled" || echo "Enabled")"
+            fi
+        else
+            echo "Unable to read module parameters. Module may be in an unusual state."
+        fi
+    else
+        print_msg "$YELLOW" "USB mass storage is not currently active."
+    fi
+    
+    if [ -f "$SETUP_FLAG" ]; then
+        print_msg "$GREEN" "Pi-USB setup has been completed."
+    else
+        print_msg "$YELLOW" "Pi-USB setup has not been run yet. Run 'sudo pi-usb --setup' to configure."
+    fi
+    
+    if [ -f "$AUTO_CONFIG" ]; then
+        print_msg "$GREEN" "Auto-mount is configured."
+        source "$AUTO_CONFIG"
+        echo "Auto-mount settings:"
+        echo "  Image: $IMAGE_PATH"
+        
+        if [ ! -f "$IMAGE_PATH" ]; then
+            print_msg "$YELLOW" "  Warning: The configured image file no longer exists!"
+        fi
+        
+        echo "  Mode: $([ "$READONLY" = "true" ] && echo "Read-only" || echo "Read-write")"
+        echo "  Type: $([ "$REMOVABLE" = "true" ] && echo "Removable" || echo "Non-removable")"
+        
+        if systemctl is-enabled "$SERVICE_NAME" &>/dev/null; then
+            print_msg "$GREEN" "Auto-mount service is enabled."
+        else
+            print_msg "$YELLOW" "Auto-mount service is configured but not enabled."
+        fi
+    else
+        print_msg "$YELLOW" "Auto-mount is not configured."
+    fi
+    
+    if [ -d "/sys/class/udc" ]; then
+        local udc_status=$(ls -A /sys/class/udc 2>/dev/null)
+        if [ -n "$udc_status" ]; then
+            print_msg "$GREEN" "USB controller is active and connected."
+        else
+            print_msg "$YELLOW" "USB controller is available but not connected to a host."
+        fi
+    else
+        print_msg "$YELLOW" "USB controller status is unknown."
+    fi
+    
+    if lsmod | grep -q "dwc2"; then
+        print_msg "$GREEN" "DWC2 USB module is loaded."
+    else
+        print_msg "$YELLOW" "DWC2 USB module is not loaded. This might indicate a configuration issue."
+    fi
+    
+    if [ -f "$LOG_FILE" ]; then
+        print_msg "$BLUE" "Auto-mount log file exists at: $LOG_FILE"
+    fi
+}
+
+show_help() {
+    echo "Pi-USB: A utility to easily make your Pi a USB drive"
+    echo "Version 1.2.0"
+    echo ""
+    echo "Usage:"
+    echo "  sudo $SCRIPT_NAME -f /path/to/image.img [--ro|--rw] [--removable|--non-removable]"
+    echo "  sudo $SCRIPT_NAME --unmount"
+    echo "  sudo $SCRIPT_NAME --status"
+    echo "  sudo $SCRIPT_NAME --setup"
+    echo "  sudo $SCRIPT_NAME --auto-setup /path/to/image.img [--ro|--rw] [--removable|--non-removable]"
+    echo "  sudo $SCRIPT_NAME --auto-disable"
+    echo ""
+    echo "Options:"
+    echo "  -f, --file PATH        Path to the image file to mount"
+    echo "  --ro                   Mount image as read-only (default)"
+    echo "  --rw                   Mount image as read-write"
+    echo "  --removable            Mount image as removable media (default)"
+    echo "  --non-removable        Mount image as non-removable media"
+    echo "  --unmount              Unmount any active USB storage"
+    echo "  --status               Show current status"
+    echo "  --setup                Configure Pi for USB mass storage mode"
+    echo "  --auto-setup PATH      Configure automatic mounting of specified image on boot"
+    echo "  --auto-disable         Disable automatic mounting on boot"
+    echo "  --auto-mount           Mount image defined in auto-mount config (used by systemd)"
+    echo "  -h, --help             Show this help message"
+    echo ""
+    echo "Examples:"
+    echo "  sudo $SCRIPT_NAME -f /path/to/recovery.img --rw --non-removable"
+    echo "  sudo $SCRIPT_NAME --auto-setup /path/to/debian.iso --ro --removable"
+    echo ""
+    echo "For info: https://github.com/DoxrGithub/pi-usb"
+}
+
+main() {
+    check_root "$@"
+
+    local image_path=""
+    local readonly="true"
+    local removable="true"
+    local command="mount"
+
+    if [ $# -eq 0 ]; then
+        show_help
+        exit 0
+    fi
+
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -f|--file)
+                if [ -z "$2" ] || [[ "$2" == -* ]]; then
+                    print_msg "$RED" "Error: Missing file path after -f/--file option."
+                    exit 1
+                fi
+                image_path="$2"
+                shift 2
+                ;;
+            --ro)
+                readonly="true"
+                shift
+                ;;
+            --rw)
+                readonly="false"
+                shift
+                ;;
+            --removable)
+                removable="true"
+                shift
+                ;;
+            --non-removable)
+                removable="false"
+                shift
+                ;;
+            --unmount)
+                command="unmount"
+                shift
+                ;;
+            --status)
+                command="status"
+                shift
+                ;;
+            --setup)
+                command="setup"
+                shift
+                ;;
+            --auto-setup)
+                command="auto-setup"
+                if [ -z "$2" ] || [[ "$2" == -* ]]; then
+                    print_msg "$RED" "Error: Missing file path after --auto-setup option."
+                    exit 1
+                fi
+                image_path="$2"
+                shift 2
+                ;;
+            --auto-disable)
+                command="auto-disable"
+                shift
+                ;;
+            --auto-mount)
+                command="auto-mount"
+                shift
+                ;;
+            -h|--help)
+                show_help
+                exit 0
+                ;;
+            *)
+                print_msg "$RED" "Unknown option: $1"
+                show_help
+                exit 1
+                ;;
+        esac
+    done
+
+    case $command in
+        mount)
+            if [ -z "$image_path" ]; then
+                print_msg "$RED" "Error: No image file specified."
+                show_help
+                exit 1
+            fi
+            mount_usb "$image_path" "$readonly" "$removable"
+            ;;
+        unmount)
+            unmount_usb
+            ;;
+        status)
+            show_status
+            ;;
+        setup)
+            setup
+            ;;
+        auto-setup)
+            setup_automount "$image_path" "$readonly" "$removable"
+            ;;
+        auto-disable)
+            disable_automount
+            ;;
+        auto-mount)
+            auto_mount
+            ;;
+    esac
+}
+
+main "$@"
