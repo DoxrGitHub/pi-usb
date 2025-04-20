@@ -1,14 +1,15 @@
-# pi-usb
+# Pi-USB
+
 Use your Pi as a bootable/mountable storage USB
 
 ## Why?
-If you have multiple bootable images and don't want to keep flashing a USB drive to swap through them, you can use this. Or if you want to use pi-usb to spoof a (or multiple) normal, regular thumbdrive(s), it is also possible (see below). For example, I have multiple ChromeOS shims and recoveries, and I can't use Ventoy as the Chromebook won't accept that; I can use this to serve the recovery/shim without needing to flash to a USB.
+If you have multiple bootable images and don't want to keep flashing a USB drive to swap through them, you can use this. For example, I have multiple ChromeOS shims and recoveries, and I can't use Ventoy as the Chromebook won't accept that; I can use this to serve the recovery/shim without needing to flash to a USB. Or if you want to use Pi-USB to spoof a (or multiple) normal, regular thumbdrive(s), it is also possible (see below). 
 
 ## Support
 
 | Model                     | Works? | Notes                                                |
 |---------------------------|--------|------------------------------------------------------|
-| Raspberry Pi Zero          | ⚠️     | Has a micro-USB OTG port, but you'd have to figure out SSH/auto-setup with this |
+| Raspberry Pi Zero          | ✅⚠️   | Has a micro-USB OTG port, but just make sure to use auto-setup prior to usage with the host* |
 | Pi Zero W / WH             | ✅     | Perfect for this                                      |
 | Pi Zero 2 W                | ✅     | Used this for testing                                |
 | Pi 4 (via USB-C)           | ⚠️     | Has OTG on USB-C, not tested though                  |
@@ -19,17 +20,66 @@ If you have multiple bootable images and don't want to keep flashing a USB drive
 | Pi 5                       | ❌⚠️   | Theoretically possible but literally not worth it    |
 
 
-Basically if you have a Pi Zero you're good
+*Basically, if you have a Pi Zero, you're good; however, if you're using Pi-USB without wifi and/or a headless setup/SSH already set up, then running auto-setup 
 
-## Install Script
+## How do I use it?
 
-To do
+Keep in mind: to use this, you need to plug in the Pi to the host using the USB port (this is the closest one on the right of the micro HDMI port), not the PWR IN port. This means that you cannot use Ethernet to start SSH with your Pi, if the host is not online (which is usually the case when you need to recover your system with a recovery image); to mitigate this, either set up WiFi and start SSH on boot (possible with a headless Pi Zero W setup), or set up auto-start for an image while you are still able to SSH/run commands on the machine.
 
-## Run Script
+### Install Script
 
-to do
+You *need* root access/sudo! 
 
-### Spoof a Writable Thumbdrive
+1. Run these commands (probably through SSH) to install the script to `~/pi-usb/`
+
+```sh
+cd
+mkdir -p pi-usb
+curl https://raw.githubusercontent.com/DoxrGitHub/pi-usb/refs/heads/main/pi-usb -o pi-usb
+cd pi-usb
+chmod +x pi-usb
+```
+
+This will create the `pi-usb` utility. When you're ready (this will require you to reboot to take effect), run the setup. You cannot use Pi-USB without running the setup, as the setup sets up USB OTG.
+
+```sh
+cd ~/pi-usb/
+./pi-usb --setup
+```
+
+When prompted, enter `y`, and you will reboot. Now, you can delete `~/pi-usb/pi-usb`, as the setup process now lets you run Pi-USB as a normal command.
+
+### Documentation
+
+```
+Usage:
+  sudo  -f /path/to/image.img [--ro|--rw] [--removable|--non-removable]
+  sudo  --unmount
+  sudo  --status
+  sudo  --setup
+  sudo  --auto-setup /path/to/image.img [--ro|--rw] [--removable|--non-removable]
+  sudo  --auto-disable
+
+Options:
+  -f, --file PATH        Path to the image file to mount
+  --ro                   Mount image as read-only (default)
+  --rw                   Mount image as read-write
+  --removable            Mount image as removable media (default)
+  --non-removable        Mount image as non-removable media
+  --unmount              Unmount any active USB storage
+  --status               Show current status
+  --setup                Configure Pi for USB mass storage mode
+  --auto-setup PATH      Configure automatic mounting of specified image on boot
+  --auto-disable         Disable automatic mounting on boot
+  --auto-mount           Mount image defined in auto-mount config (used by systemd)
+  -h, --help             Show the help message
+
+Examples:
+  sudo  -f /path/to/usb_backup.img --rw --non-removable
+  sudo  --auto-setup chromeos_recovery.bin --ro # You don't need to pass the full path
+```
+
+### Extra: Create a Writable, Empty Drive File
 
 If you want to create a writable USB storage space to use normally, run these commands to create a drive file
 
@@ -38,4 +88,4 @@ dd if=/dev/zero of=USB_FILE_NAME.bin bs=1M count=8192
 mkfs.vfat USB_FILE_NAME.bin
 ```
 
-Replace USB_FILE_NAME with the file name, 8192 with the MB number of the drive (the given commands create a 8GB file), and you can replace the second command with something like mkfs.ntfs or ext4 to format the drive file.
+Replace USB_FILE_NAME with the file name, 8192 with the MiB number of the drive (the given commands create a 8GB file), and you can replace the second command with something like mkfs.ntfs or ext4 to format the drive file. Pass this file to Pi-USB, and use it as a drive.
