@@ -10,17 +10,20 @@ If you have multiple bootable images and don't want to keep flashing a USB drive
 | Model                     | Works? | Notes                                                |
 |---------------------------|--------|------------------------------------------------------|
 | Raspberry Pi Zero          | ✅⚠️   | Has a micro-USB OTG port, but just make sure to use auto-setup prior to usage with the host* |
-| Pi Zero W / WH             | ✅     | Perfect for this                                      |
+| Pi Zero W / WH             | ✅     | Perfect for this                                     |
 | Pi Zero 2 W                | ✅     | Used this for testing                                |
-| Pi 4 (via USB-C)           | ⚠️     | Has OTG on USB-C, not tested though                  |
-| Pi 3 A+ / B / B+           | ❌     | No OTG port support for gadget mode                  |
+| Pi 4 (via USB-C)           | ✅⚠️   | Has OTG on USB-C, needs some extra work**            |
+| Pi 3 A+                    | ✅     | The Micro-USB port          supports USB OTG         |
+| Pi 3 B / B+                | ❌     | No OTG port support for gadget mode                  |
 | Pi 2 / Pi 1 / Pi B+        | ❌     | No OTG support                                       |
-| Pi Compute Modules         | ???    | I don't know maybe with some manual hacking          |
+| Pi Compute Modules         | ❌⚠️     | Theoretically possible in some cases but unsure                    |
 | Raspberry Pi 400           | ❌     | No OTG/gadget support                                |
-| Pi 5                       | ❌⚠️   | Theoretically possible but literally not worth it    |
+| Pi 5                       | ❌     | No OTG/gadget support                                |
 
 
-*Basically, if you have a Pi Zero, you're good; however, if you're using Pi-USB without wifi and/or a headless setup/SSH already set up, then in you should look into using auto-setup for purposes like recovery images. 
+*Basically, if you have a Pi Zero, you're good; however, if you're using Pi-USB without wifi and/or a headless setup/SSH already set up, then in you should look into using auto-setup for purposes like recovery images, when the host is unable to provide the Pi Zero for Ethernet.
+
+**You need to connect the Pi 4 to the host through the USB-C port, which switches it to OTG mode. However, this means that the Pi 4 can't draw power from the host anymore. To solve this, you'll need a USB-C Y cable or splitter. The data side of the Y cable connects to the host, while the power side should be connected to a separate power source. This way, the Pi 4 can be connected to the host for data and also be powered simultaneously.
 
 ## How do I use it?
 
