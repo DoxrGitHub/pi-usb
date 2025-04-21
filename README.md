@@ -29,6 +29,8 @@ If you have multiple bootable images and don't want to keep flashing a USB drive
 
 Keep in mind: to use this, you need to plug in the Pi to the host using the USB port (this is the closest one on the right of the micro HDMI port), not the PWR IN port. This means that you cannot use Ethernet to start SSH with your Pi, if the host is not online (which is usually the case when you need to recover your system with a recovery image); to mitigate this, either set up WiFi and start SSH on boot (possible with a headless Pi Zero W setup), or set up auto-start for an image while you are still able to SSH/run commands on the machine.
 
+This script was made for Debian/RPI OS, supports older and newer versions; you may need to modify Pi-USB to support other distributions like Arch or Alpine.
+
 ### Install Script
 
 You *need* root access/sudo! 
