@@ -53,12 +53,12 @@ When prompted, enter `y`, and you will reboot. Now, you can delete `~/pi-usb/pi-
 
 ```
 Usage:
-  sudo  -f /path/to/image.img [--ro|--rw] [--removable|--non-removable]
-  sudo  --unmount
-  sudo  --status
-  sudo  --setup
-  sudo  --auto-setup /path/to/image.img [--ro|--rw] [--removable|--non-removable]
-  sudo  --auto-disable
+  sudo pi-usb -f /path/to/image.img [--ro|--rw] [--removable|--non-removable]
+  sudo pi-usb --unmount
+  sudo pi-usb --status
+  sudo pi-usb --setup
+  sudo pi-usb --auto-setup /path/to/image.img [--ro|--rw] [--removable|--non-removable]
+  sudo pi-usb --auto-disable
 
 Options:
   -f, --file PATH        Path to the image file to mount
@@ -75,8 +75,8 @@ Options:
   -h, --help             Show the help message
 
 Examples:
-  sudo  -f /path/to/usb_backup.img --rw --non-removable
-  sudo  --auto-setup chromeos_recovery.bin --ro # You don't need to pass the full path
+  sudo pi-usb -f /path/to/usb_backup.img --rw --non-removable
+  sudo pi-usb --auto-setup chromeos_recovery.bin --ro # You don't need to pass the full path
 ```
 
 ### Extra: Create a Writable, Empty Drive File
