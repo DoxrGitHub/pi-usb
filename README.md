@@ -20,7 +20,7 @@ If you have multiple bootable images and don't want to keep flashing a USB drive
 | Pi 5                       | ❌⚠️   | Theoretically possible but literally not worth it    |
 
 
-*Basically, if you have a Pi Zero, you're good; however, if you're using Pi-USB without wifi and/or a headless setup/SSH already set up, then running auto-setup 
+*Basically, if you have a Pi Zero, you're good; however, if you're using Pi-USB without wifi and/or a headless setup/SSH already set up, then in you should look into using auto-setup for purposes like recovery images. 
 
 ## How do I use it?
 
